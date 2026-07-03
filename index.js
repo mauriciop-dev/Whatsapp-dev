@@ -23,19 +23,74 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// 2. ENDPOINT DE RECEPCIÓN (Aquí llegarán los clics y mensajes de WhatsApp)
-app.post('/webhook', (req, res) => {
+// 2. ENDPOINT DE RECEPCIÓN (Aquí llegan los mensajes del usuario)
+app.post('/webhook', async (req, res) => {
     const body = req.body;
 
-    // Le respondemos a Meta de inmediato (LINEAMIENTO CRÍTICO: < 3 segundos)
+    // 1. Responder de inmediato a Meta para cumplir el acuerdo de < 3 segundos
     res.status(200).send('EVENT_RECEIVED');
 
-    // Procesamos el mensaje en segundo plano
-    if (body.object === 'page' || body.object === 'whatsapp_business_account') {
-        console.log('Mensaje recibido de WhatsApp:', JSON.stringify(body, null, 2));
-        // Aquí programaremos la lógica del pago y envío del PDF en el siguiente paso
+    try {
+        // 2. Validar que sea un evento de mensaje de WhatsApp válido
+        if (body.object &&
+            body.entry &&
+            body.entry[0].changes &&
+            body.entry[0].changes[0].value.messages) {
+
+            const messageData = body.entry[0].changes[0].value.messages[0];
+            const customerPhone = messageData.from; // El número de celular del cliente
+            const phoneNameId = body.entry[0].changes[0].value.metadata.phone_number_id;
+
+            // Evitar procesar nuestros propios mensajes enviados
+            if (messageData.type === 'text') {
+                const userMessage = messageData.text.body.trim().toLowerCase();
+                console.log(`Mensaje de ${customerPhone}: ${userMessage}`);
+
+                // 3. Flujo del MVP: Si el usuario escribe algo relacionado con el libro
+                if (userMessage.includes('libro') || userMessage.includes('comprar') || userMessage.includes('materia')) {
+
+                    // Aquí llamaremos a la pasarela para generar el link real de 10,000 COP
+                    const linkDePagoReal = "https://link.mercadopago.com.co/prodigco";
+
+                    const textoRespuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig. \n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: ${linkDePagoReal}\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
+
+                    // Enviar el mensaje de respuesta mediante la API de Meta
+                    await enviarMensajeWhatsApp(customerPhone, phoneNameId, textoRespuesta);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error procesando el webhook de Meta:', error);
     }
 });
+
+// Función auxiliar para enviar mensajes de texto usando axios o fetch nativo
+async function enviarMensajeWhatsApp(to, phoneId, text) {
+    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
+
+    const payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: to,
+        type: "text",
+        text: { preview_url: true, body: text }
+    };
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Meta API Error: ${errText}`);
+    }
+    console.log(`Mensaje enviado con éxito a ${to}`);
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor corriendo en el puerto ${PORT}`));
