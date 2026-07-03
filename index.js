@@ -50,7 +50,7 @@ app.post('/webhook', async (req, res) => {
                 if (userMessage.includes('libro') || userMessage.includes('comprar') || userMessage.includes('materia')) {
 
                     // Aquí llamaremos a la pasarela para generar el link real de 10,000 COP
-                    const linkDePagoReal = "https://link.mercadopago.com.co/prodigco";
+                    const linkDePagoReal = "https://mpago.li/2upFTB5";
 
                     const textoRespuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig. \n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: ${linkDePagoReal}\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
 
