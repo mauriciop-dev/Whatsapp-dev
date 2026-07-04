@@ -49,7 +49,7 @@ async function procesarMensaje(body) {
         const text = messageData.text.body.trim().toLowerCase();
         if (text === 'libro') {
             await registrarComprador(from, phoneId);
-            const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
+            const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $2.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2joCuAn\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
             await enviarMensajeWhatsApp(from, phoneId, respuesta);
         }
     }
