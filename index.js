@@ -29,8 +29,6 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-    res.status(200).send('EVENT_RECEIVED');
-
     try {
         const body = req.body;
         if (body.object && body.entry && body.entry[0].changes &&
@@ -54,11 +52,10 @@ app.post('/webhook', async (req, res) => {
     } catch (error) {
         console.error('Error en webhook WhatsApp:', error);
     }
+    res.status(200).send('EVENT_RECEIVED');
 });
 
 app.post('/webhook-pago', async (req, res) => {
-    res.status(200).send('OK');
-
     try {
         const notification = req.body;
 
@@ -86,6 +83,7 @@ app.post('/webhook-pago', async (req, res) => {
     } catch (error) {
         console.error('Error procesando IPN:', error);
     }
+    res.status(200).send('OK');
 });
 
 async function obtenerPagoMercadoPago(paymentId) {
