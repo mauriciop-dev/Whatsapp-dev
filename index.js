@@ -122,27 +122,35 @@ function obtenerPagoMercadoPago(paymentId) {
 }
 
 async function enviarMensajeWhatsApp(to, phoneId, text) {
-    try {
-        const response = await fetch(`https://graph.facebook.com/v23.0/${phoneId}/messages`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: to,
-                type: "text",
-                text: { preview_url: false, body: text }
-            })
-        });
+    const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
 
-        const data = await response.json();
-        console.log("Respuesta de la API de Meta al enviar:", JSON.stringify(data));
-    } catch (error) {
-        console.error("Error enviando a WhatsApp:", error);
-    }
+    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
+
+    const payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: to,
+        type: "text",
+        text: {
+            preview_url: false,
+            body: text
+        }
+    };
+
+    console.log(`Iniciando petición HTTPS segura a Meta para el número: ${to}`);
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    console.log("Respuesta cruda de Meta:", JSON.stringify(data));
+    return data;
 }
 
 const PORT = process.env.PORT || 3000;
