@@ -32,36 +32,36 @@ app.post('/webhook', async (req, res) => {
     res.status(200).send('EVENT_RECEIVED');
 
     try {
-        // 2. Validar que sea un evento de mensaje de WhatsApp válido
+        // 2. Validar de forma segura que sea un evento de mensaje de WhatsApp que CONTENGA mensajes
         if (body.object &&
             body.entry &&
             body.entry[0].changes &&
-            body.entry[0].changes[0].value.messages) {
+            body.entry[0].changes[0].value &&
+            body.entry[0].changes[0].value.messages &&
+            body.entry[0].changes[0].value.messages[0]) {
 
             const messageData = body.entry[0].changes[0].value.messages[0];
-            const customerPhone = messageData.from; // El número de celular del cliente
-            const phoneNameId = body.entry[0].changes[0].value.metadata.phone_number_id;
+            const from = messageData.from;
+            const phoneId = body.entry[0].changes[0].value.metadata.phone_number_id;
 
-            // Evitar procesar nuestros propios mensajes enviados
-            if (messageData.type === 'text') {
-                const userMessage = messageData.text.body.trim().toLowerCase();
-                console.log(`Mensaje de ${customerPhone}: ${userMessage}`);
+            // Validar que el mensaje recibido sea estrictamente de tipo texto
+            if (messageData.type === 'text' && messageData.text && messageData.text.body) {
+                const text = messageData.text.body.trim().toLowerCase();
+                console.log(`Mensaje de texto procesado de ${from}: "${text}"`);
 
-                // 3. Flujo del MVP: Si el usuario escribe algo relacionado con el libro
-                if (userMessage.includes('libro') || userMessage.includes('comprar') || userMessage.includes('materia')) {
+                if (text === 'libro') {
+                    const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
 
-                    // Aquí llamaremos a la pasarela para generar el link real de 10,000 COP
-                    const linkDePagoReal = "https://mpago.li/2upFTB5";
-
-                    const textoRespuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig. \n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: ${linkDePagoReal}\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
-
-                    // Enviar el mensaje de respuesta mediante la API de Meta
-                    await enviarMensajeWhatsApp(customerPhone, phoneNameId, textoRespuesta);
+                    await enviarMensajeWhatsApp(from, phoneId, respuesta);
                 }
+            } else {
+                console.log(`Se recibió un evento de WhatsApp pero no era un texto (Tipo: ${messageData.type})`);
             }
+        } else if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.statuses) {
+            console.log("Notificación de estado recibida (entregado/leído). No requiere respuesta.");
         }
     } catch (error) {
-        console.error('Error procesando el webhook de Meta:', error);
+        console.error('Error crítico procesando el webhook de WhatsApp:', error);
     }
 });
 
