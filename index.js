@@ -145,9 +145,17 @@ async function crearPreferenceMP(prod, phone) {
             unit_price: prod.price_cop,
             currency_id: "COP"
         }],
+        payer: {
+            email: "hmauricio.pineda@gmail.com"
+        },
         external_reference: externalRef,
         notification_url: WEBHOOK_PAGO_URL,
-        purpose: "wallet_purchase"
+        auto_return: "approved",
+        back_urls: {
+            success: "https://whatsapp-dev-prod.vercel.app/pago-exitoso",
+            failure: "https://whatsapp-dev-prod.vercel.app/pago-fallido",
+            pending: "https://whatsapp-dev-prod.vercel.app/pago-pendiente"
+        }
     };
 
     const response = await fetchWithTimeout('https://api.mercadopago.com/checkout/preferences', {
