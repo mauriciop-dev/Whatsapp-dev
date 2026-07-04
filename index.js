@@ -45,10 +45,14 @@ app.get('/webhook', (req, res) => {
 
 // ── WhatsApp incoming messages ──
 app.post('/webhook', async (req, res) => {
-    await Promise.race([
-        procesarMensaje(req.body),
-        new Promise(r => setTimeout(r, 2500))
-    ]);
+    try {
+        await Promise.race([
+            procesarMensaje(req.body),
+            new Promise(r => setTimeout(r, 3000))
+        ]);
+    } catch (err) {
+        console.error('Webhook error:', err.message);
+    }
     res.status(200).send('EVENT_RECEIVED');
 });
 
@@ -110,10 +114,24 @@ async function procesarSeleccionProducto(to, phoneId, prodRowId) {
         return;
     }
 
-    const preference = await crearPreferenceMP(prod, to);
+    let paymentUrl;
+    try {
+        const preference = await crearPreferenceMP(prod, to);
+        paymentUrl = preference.init_point;
+        console.log('MP preference created:', paymentUrl);
+    } catch (err) {
+        console.error('Error creating MP preference:', err.message);
+        const fallback = `https://mpago.li/2joCuAn`;
+        const errMsg = `📖 *${prod.title}*\n\n${prod.description}\n\n💰 *$${prod.price_cop.toLocaleString()} COP*\n\n⚠️ No se pudo generar tu link de pago automático. Usa este enlace:\n${fallback}`;
+        await enviarMensajeWhatsApp(to, phoneId, errMsg, true);
+        return;
+    }
 
     const msg = `📖 *${prod.title}*\n\n${prod.description}\n\n💰 *$${prod.price_cop.toLocaleString()} COP*\n\nToca el botón de abajo para pagar de forma segura con Mercado Pago.`;
-    await enviarTextoConBotonWhatsApp(to, phoneId, msg, preference.init_point);
+    const ok = await enviarTextoConBotonWhatsApp(to, phoneId, msg, paymentUrl);
+    if (!ok) {
+        await enviarMensajeWhatsApp(to, phoneId, `${msg}\n\n👇 O abre este link:\n${paymentUrl}`, true);
+    }
 }
 
 // ── Mercado Pago: crear preferencia de pago ──
@@ -225,7 +243,7 @@ async function obtenerPagoMercadoPago(paymentId) {
 }
 
 // ── WhatsApp: enviar mensajes ──
-async function enviarMensajeWhatsApp(to, phoneId, text) {
+async function enviarMensajeWhatsApp(to, phoneId, text, previewUrl = false) {
     const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
     const response = await fetchWithTimeout(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
         method: 'POST',
@@ -234,7 +252,7 @@ async function enviarMensajeWhatsApp(to, phoneId, text) {
             messaging_product: "whatsapp",
             recipient_type: "individual",
             to, type: "text",
-            text: { preview_url: false, body: text }
+            text: { preview_url: previewUrl, body: text }
         })
     });
     const data = await response.json();
@@ -275,7 +293,7 @@ async function enviarTextoConBotonWhatsApp(to, phoneId, text, url) {
                 action: {
                     name: "cta_url",
                     parameters: {
-                        display_text: "💳 Pagar con Mercado Pago",
+                        display_text: "Pagar ahora",
                         url
                     }
                 }
@@ -283,8 +301,11 @@ async function enviarTextoConBotonWhatsApp(to, phoneId, text, url) {
         })
     });
     const data = await response.json();
-    if (!response.ok) console.error('Error WhatsApp CTA:', data);
-    return data;
+    if (!response.ok) {
+        console.error('Error WhatsApp CTA:', JSON.stringify(data));
+        return false;
+    }
+    return true;
 }
 
 async function enviarDocumentoWhatsApp(to, phoneId, pdfUrl, filename) {
