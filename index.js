@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const https = require('https');
 const app = express();
 
 app.use(express.json());
@@ -64,32 +65,51 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// Función auxiliar para enviar mensajes de texto usando axios o fetch nativo
-async function enviarMensajeWhatsApp(to, phoneId, text) {
-    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
+function enviarMensajeWhatsApp(to, phoneId, text) {
+    return new Promise((resolve, reject) => {
+        const url = `/v25.0/${phoneId}/messages`;
 
-    const payload = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "text",
-        text: { preview_url: true, body: text }
-    };
+        const payload = JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: to,
+            type: "text",
+            text: { preview_url: true, body: text }
+        });
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
+        const options = {
+            hostname: 'graph.facebook.com',
+            path: url,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    console.log(`Mensaje enviado con éxito a ${to}`);
+                    resolve(JSON.parse(data));
+                } else {
+                    console.error(`Error de Meta API (${res.statusCode}):`, data);
+                    reject(new Error(data));
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            console.error('Error de conexión con Meta:', e);
+            reject(e);
+        });
+
+        req.write(payload);
+        req.end();
     });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Meta API Error: ${errText}`);
-    }
-    console.log(`Mensaje enviado con éxito a ${to}`);
 }
 
 const PORT = process.env.PORT || 3000;
