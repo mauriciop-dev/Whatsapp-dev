@@ -65,6 +65,62 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
+// 3. ENDPOINT DE IPN (Mercado Pago notifica aquí cuando hay un pago)
+app.post('/webhook-pago', async (req, res) => {
+    res.status(200).send('OK');
+
+    try {
+        const notification = req.body;
+        console.log('IPN recibido:', JSON.stringify(notification, null, 2));
+
+        if (notification.type === 'payment') {
+            const paymentId = notification.data.id;
+            const payment = await obtenerPagoMercadoPago(paymentId);
+
+            if (payment.status === 'approved') {
+                const customerPhone = payment.payer?.phone?.number || payment.external_reference;
+                const phoneNameId = process.env.PHONE_NUMBER_ID;
+
+                if (customerPhone && phoneNameId) {
+                    const textoRespuesta = `¡Gracias por tu compra! Aquí tienes tu libro "Materia Programable y la Próxima Revolución Digital" en formato PDF:\n\nhttps://fvdltrqzdosqkebsydqn.supabase.co/storage/v1/object/public/Libros/materia_programable_prodig.pdf\n\n¡Disfruta la lectura!`;
+
+                    await enviarMensajeWhatsApp(customerPhone, phoneNameId, textoRespuesta);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error procesando IPN de Mercado Pago:', error);
+    }
+});
+
+function obtenerPagoMercadoPago(paymentId) {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: 'api.mercadopago.com',
+            path: `/v1/payments/${paymentId}`,
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(JSON.parse(data));
+                } else {
+                    reject(new Error(data));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.end();
+    });
+}
+
 function enviarMensajeWhatsApp(to, phoneId, text) {
     return new Promise((resolve, reject) => {
         const url = `/v25.0/${phoneId}/messages`;
