@@ -1,212 +1,189 @@
 require('dotenv').config();
 const express = require('express');
-const https = require('https');
+
 const app = express();
 
 app.use(express.json());
 
-// 1. ENDPOINT DE VERIFICACIÓN (Para que Meta valide tu servidor)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || '';
+const PDF_URL = "https://fvdltrqzdosqkebsydqn.supabase.co/storage/v1/object/public/Libros/materia_programable_prodig.pdf";
+
+app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+});
+
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
-    // Pon el mismo token que inventes aquí en el dashboard de Meta
     const MY_VERIFY_TOKEN = process.env.VERIFY_TOKEN || "prodig_secret_token";
 
     if (mode && token) {
         if (mode === 'subscribe' && token === MY_VERIFY_TOKEN) {
-            console.log('¡Webhook verificado con éxito!');
             return res.status(200).send(challenge);
-        } else {
-            return res.sendStatus(403);
         }
+        return res.sendStatus(403);
     }
 });
 
-// Store temporal: cuando un usuario pide el libro, guardamos su número
-const compradoresPendientes = [];
-
-// 2. ENDPOINT DE RECEPCIÓN (Aquí llegan los mensajes del usuario)
 app.post('/webhook', async (req, res) => {
-    const body = req.body;
-
-    // 1. Responder de inmediato a Meta para cumplir el acuerdo de < 3 segundos
     res.status(200).send('EVENT_RECEIVED');
 
     try {
-        // 2. Validar de forma segura que sea un evento de mensaje de WhatsApp que CONTENGA mensajes
-        if (body.object &&
-            body.entry &&
-            body.entry[0].changes &&
-            body.entry[0].changes[0].value &&
-            body.entry[0].changes[0].value.messages &&
+        const body = req.body;
+        if (body.object && body.entry && body.entry[0].changes &&
+            body.entry[0].changes[0].value && body.entry[0].changes[0].value.messages &&
             body.entry[0].changes[0].value.messages[0]) {
 
             const messageData = body.entry[0].changes[0].value.messages[0];
             const from = messageData.from;
             const phoneId = body.entry[0].changes[0].value.metadata.phone_number_id;
 
-            // Validar que el mensaje recibido sea estrictamente de tipo texto
             if (messageData.type === 'text' && messageData.text && messageData.text.body) {
                 const text = messageData.text.body.trim().toLowerCase();
-                console.log(`Mensaje de texto procesado de ${from}: "${text}"`);
 
                 if (text === 'libro') {
-                    // Guardamos el número para cuando llegue el IPN de pago
-                    compradoresPendientes.push({ phone: from, phoneId, timestamp: Date.now() });
-                    console.log(`Comprador registrado: ${from} (pendientes: ${compradoresPendientes.length})`);
-
+                    await registrarComprador(from, phoneId);
                     const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
-
                     await enviarMensajeWhatsApp(from, phoneId, respuesta);
                 }
-            } else {
-                console.log(`Se recibió un evento de WhatsApp pero no era un texto (Tipo: ${messageData.type})`);
             }
-        } else if (body.entry && body.entry[0].changes && body.entry[0].changes[0].value.statuses) {
-            console.log("Notificación de estado recibida (entregado/leído). No requiere respuesta.");
         }
     } catch (error) {
-        console.error('Error crítico procesando el webhook de WhatsApp:', error);
+        console.error('Error en webhook WhatsApp:', error);
     }
 });
 
-// 3. ENDPOINT DE IPN (Mercado Pago notifica aquí cuando hay un pago)
 app.post('/webhook-pago', async (req, res) => {
     res.status(200).send('OK');
 
     try {
         const notification = req.body;
-        console.log('IPN recibido:', JSON.stringify(notification, null, 2));
 
         if (notification.type === 'payment') {
             const paymentId = notification.data.id;
-            console.log(`Procesando pago ID: ${paymentId}`);
             const payment = await obtenerPagoMercadoPago(paymentId);
-            console.log('Detalle del pago:', JSON.stringify(payment, null, 2));
 
-            if (payment.status === 'approved') {
-                let customerPhone = payment.payer?.phone?.number || payment.external_reference;
-                const phoneNameId = process.env.PHONE_NUMBER_ID;
+            if (payment && payment.status === 'approved') {
+                let customerPhone = payment.payer?.phone?.number;
+                let phoneNameId = process.env.PHONE_NUMBER_ID;
 
-                // Si MP no nos dio el teléfono, usamos el store temporal
-                if (!customerPhone && compradoresPendientes.length > 0) {
-                    const comprador = compradoresPendientes.shift();
-                    customerPhone = comprador.phone;
-                    console.log(`Usando comprador del store temporal: ${customerPhone}`);
+                if (!customerPhone) {
+                    const comprador = await obtenerCompradorPendiente();
+                    if (comprador) {
+                        customerPhone = comprador.phone;
+                        await marcarCompradorEnviado(comprador.id, paymentId);
+                    }
                 }
 
                 if (customerPhone && phoneNameId) {
-                    const pdfUrl = "https://fvdltrqzdosqkebsydqn.supabase.co/storage/v1/object/public/Libros/materia_programable_prodig.pdf";
-
-                    console.log(`Enviando PDF a ${customerPhone}...`);
-                    await enviarDocumentoWhatsApp(customerPhone, phoneNameId, pdfUrl);
-                } else {
-                    console.error(`No se pudo determinar el número del comprador. customerPhone: ${customerPhone}, phoneNameId: ${phoneNameId}`);
+                    await enviarDocumentoWhatsApp(customerPhone, phoneNameId, PDF_URL);
                 }
-            } else {
-                console.log(`Pago no aprobado. Estado: ${payment.status}`);
             }
         }
     } catch (error) {
-        console.error('Error procesando IPN de Mercado Pago:', error);
+        console.error('Error procesando IPN:', error);
     }
 });
 
-function obtenerPagoMercadoPago(paymentId) {
-    return new Promise((resolve, reject) => {
-        const options = {
-            hostname: 'api.mercadopago.com',
-            path: `/v1/payments/${paymentId}`,
-            method: 'GET',
+async function obtenerPagoMercadoPago(paymentId) {
+    const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` }
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`MP error ${response.status}: ${errorText}`);
+    }
+    return response.json();
+}
+
+async function registrarComprador(phone, phoneId) {
+    await fetch(`${SUPABASE_URL}/rest/v1/compradores`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({ phone, phone_id: phoneId, status: 'pending' })
+    });
+}
+
+async function obtenerCompradorPendiente() {
+    const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/compradores?status=eq.pending&order=created_at.asc&limit=1`,
+        {
             headers: {
-                'Authorization': `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
             }
-        };
+        }
+    );
+    const data = await response.json();
+    return data && data.length > 0 ? data[0] : null;
+}
 
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(JSON.parse(data));
-                } else {
-                    reject(new Error(data));
-                }
-            });
-        });
-
-        req.on('error', reject);
-        req.end();
+async function marcarCompradorEnviado(id, paymentId) {
+    await fetch(`${SUPABASE_URL}/rest/v1/compradores?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({ status: 'completed', payment_id: String(paymentId) })
     });
 }
 
 async function enviarMensajeWhatsApp(to, phoneId, text) {
     const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
-
-    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
-
-    const payload = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "text",
-        text: {
-            preview_url: false,
-            body: text
-        }
-    };
-
-    console.log(`Iniciando petición HTTPS segura a Meta para el número: ${to}`);
-
-    const response = await fetch(url, {
+    const response = await fetch(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to, type: "text",
+            text: { preview_url: false, body: text }
+        })
     });
-
     const data = await response.json();
-    console.log("Respuesta cruda de Meta:", JSON.stringify(data));
+    if (!response.ok) console.error('Error WhatsApp:', data);
     return data;
 }
 
 async function enviarDocumentoWhatsApp(to, phoneId, pdfUrl) {
     const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
-    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
-
-    const payload = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: to,
-        type: "document",
-        document: {
-            link: pdfUrl,
-            filename: "Materia_Programable_ProDig.pdf",
-            caption: "¡Aquí tienes tu libro! Gracias por tu compra."
-        }
-    };
-
-    console.log(`Enviando documento PDF a ${to}...`);
-
-    const response = await fetch(url, {
+    const response = await fetch(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to, type: "document",
+            document: {
+                link: pdfUrl,
+                filename: "Materia_Programable_ProDig.pdf",
+                caption: "¡Aquí tienes tu libro! Gracias por tu compra."
+            }
+        })
     });
-
     const data = await response.json();
-    console.log("Respuesta de Meta al enviar PDF:", JSON.stringify(data));
+    if (!response.ok) console.error('Error WhatsApp doc:', data);
     return data;
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor corriendo en el puerto ${PORT}`));
+if (process.env.NODE_ENV !== 'vercel') {
+    app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+}
 
 module.exports = app;
