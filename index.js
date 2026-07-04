@@ -28,66 +28,74 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-app.post('/webhook', async (req, res) => {
-    try {
-        const body = req.body;
-        if (body.object && body.entry && body.entry[0].changes &&
-            body.entry[0].changes[0].value && body.entry[0].changes[0].value.messages &&
-            body.entry[0].changes[0].value.messages[0]) {
-
-            const messageData = body.entry[0].changes[0].value.messages[0];
-            const from = messageData.from;
-            const phoneId = body.entry[0].changes[0].value.metadata.phone_number_id;
-
-            if (messageData.type === 'text' && messageData.text && messageData.text.body) {
-                const text = messageData.text.body.trim().toLowerCase();
-
-                if (text === 'libro') {
-                    await registrarComprador(from, phoneId);
-                    const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
-                    await enviarMensajeWhatsApp(from, phoneId, respuesta);
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error en webhook WhatsApp:', error);
-    }
+app.post('/webhook', (req, res) => {
     res.status(200).send('EVENT_RECEIVED');
+    procesarMensaje(req.body).catch(err => console.error('Error en webhook WhatsApp:', err));
 });
 
-app.post('/webhook-pago', async (req, res) => {
-    try {
-        const notification = req.body;
+async function procesarMensaje(body) {
+    if (!body.object || !body.entry || !body.entry[0].changes ||
+        !body.entry[0].changes[0].value || !body.entry[0].changes[0].value.messages ||
+        !body.entry[0].changes[0].value.messages[0]) return;
 
-        if (notification.type === 'payment') {
-            const paymentId = notification.data.id;
-            const payment = await obtenerPagoMercadoPago(paymentId);
+    const messageData = body.entry[0].changes[0].value.messages[0];
+    const from = messageData.from;
+    const phoneId = body.entry[0].changes[0].value.metadata.phone_number_id;
 
-            if (payment && payment.status === 'approved') {
-                let customerPhone = payment.payer?.phone?.number;
-                let phoneNameId = process.env.PHONE_NUMBER_ID;
+    if (messageData.type === 'text' && messageData.text && messageData.text.body) {
+        const text = messageData.text.body.trim().toLowerCase();
+        if (text === 'libro') {
+            await registrarComprador(from, phoneId);
+            const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
+            await enviarMensajeWhatsApp(from, phoneId, respuesta);
+        }
+    }
+}
 
-                if (!customerPhone) {
-                    const comprador = await obtenerCompradorPendiente();
-                    if (comprador) {
-                        customerPhone = comprador.phone;
-                        await marcarCompradorEnviado(comprador.id, paymentId);
-                    }
-                }
+app.post('/webhook-pago', (req, res) => {
+    res.status(200).send('OK');
+    procesarPago(req.body).catch(err => console.error('Error procesando IPN:', err));
+});
 
-                if (customerPhone && phoneNameId) {
-                    await enviarDocumentoWhatsApp(customerPhone, phoneNameId, PDF_URL);
+async function procesarPago(notification) {
+    if (notification.type === 'payment') {
+        const paymentId = notification.data.id;
+        const payment = await obtenerPagoMercadoPago(paymentId);
+
+        if (payment && payment.status === 'approved') {
+            let customerPhone = payment.payer?.phone?.number;
+            let phoneNameId = process.env.PHONE_NUMBER_ID;
+
+            if (!customerPhone) {
+                const comprador = await obtenerCompradorPendiente();
+                if (comprador) {
+                    customerPhone = comprador.phone;
+                    await marcarCompradorEnviado(comprador.id, paymentId);
                 }
             }
+
+            if (customerPhone && phoneNameId) {
+                await enviarDocumentoWhatsApp(customerPhone, phoneNameId, PDF_URL);
+            }
         }
-    } catch (error) {
-        console.error('Error procesando IPN:', error);
     }
-    res.status(200).send('OK');
-});
+}
+
+const FETCH_TIMEOUT = 8000;
+
+async function fetchWithTimeout(url, opts = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    try {
+        const response = await fetch(url, { ...opts, signal: controller.signal });
+        return response;
+    } finally {
+        clearTimeout(timer);
+    }
+}
 
 async function obtenerPagoMercadoPago(paymentId) {
-    const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+    const response = await fetchWithTimeout(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
         headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` }
     });
     if (!response.ok) {
@@ -98,7 +106,7 @@ async function obtenerPagoMercadoPago(paymentId) {
 }
 
 async function registrarComprador(phone, phoneId) {
-    await fetch(`${SUPABASE_URL}/rest/v1/compradores`, {
+    await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/compradores`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -110,7 +118,7 @@ async function registrarComprador(phone, phoneId) {
 }
 
 async function obtenerCompradorPendiente() {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${SUPABASE_URL}/rest/v1/compradores?status=eq.pending&order=created_at.asc&limit=1`,
         {
             headers: {
@@ -124,7 +132,7 @@ async function obtenerCompradorPendiente() {
 }
 
 async function marcarCompradorEnviado(id, paymentId) {
-    await fetch(`${SUPABASE_URL}/rest/v1/compradores?id=eq.${id}`, {
+    await fetchWithTimeout(`${SUPABASE_URL}/rest/v1/compradores?id=eq.${id}`, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',
@@ -137,7 +145,7 @@ async function marcarCompradorEnviado(id, paymentId) {
 
 async function enviarMensajeWhatsApp(to, phoneId, text) {
     const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
-    const response = await fetch(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
+    const response = await fetchWithTimeout(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${token}`,
@@ -157,7 +165,7 @@ async function enviarMensajeWhatsApp(to, phoneId, text) {
 
 async function enviarDocumentoWhatsApp(to, phoneId, pdfUrl) {
     const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
-    const response = await fetch(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
+    const response = await fetchWithTimeout(`https://graph.facebook.com/v25.0/${phoneId}/messages`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${token}`,
