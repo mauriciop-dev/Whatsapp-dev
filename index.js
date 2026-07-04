@@ -121,51 +121,28 @@ function obtenerPagoMercadoPago(paymentId) {
     });
 }
 
-function enviarMensajeWhatsApp(to, phoneId, text) {
-    return new Promise((resolve, reject) => {
-        const url = `/v25.0/${phoneId}/messages`;
-
-        const payload = JSON.stringify({
-            messaging_product: "whatsapp",
-            recipient_type: "individual",
-            to: to,
-            type: "text",
-            text: { preview_url: true, body: text }
-        });
-
-        const options = {
-            hostname: 'graph.facebook.com',
-            path: url,
+async function enviarMensajeWhatsApp(to, phoneId, text) {
+    try {
+        const response = await fetch(`https://graph.facebook.com/v23.0/${phoneId}/messages`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload)
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    console.log(`Mensaje enviado con éxito a ${to}`);
-                    resolve(JSON.parse(data));
-                } else {
-                    console.error(`Error de Meta API (${res.statusCode}):`, data);
-                    reject(new Error(data));
-                }
-            });
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: to,
+                type: "text",
+                text: { preview_url: false, body: text }
+            })
         });
 
-        req.on('error', (e) => {
-            console.error('Error de conexión con Meta:', e);
-            reject(e);
-        });
-
-        req.write(payload);
-        req.end();
-    });
+        const data = await response.json();
+        console.log("Respuesta de la API de Meta al enviar:", JSON.stringify(data));
+    } catch (error) {
+        console.error("Error enviando a WhatsApp:", error);
+    }
 }
 
 const PORT = process.env.PORT || 3000;
