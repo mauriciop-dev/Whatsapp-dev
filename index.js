@@ -28,9 +28,12 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
+    await Promise.race([
+        procesarMensaje(req.body),
+        new Promise(r => setTimeout(r, 2500))
+    ]);
     res.status(200).send('EVENT_RECEIVED');
-    procesarMensaje(req.body).catch(err => console.error('Error en webhook WhatsApp:', err));
 });
 
 async function procesarMensaje(body) {
@@ -52,9 +55,12 @@ async function procesarMensaje(body) {
     }
 }
 
-app.post('/webhook-pago', (req, res) => {
+app.post('/webhook-pago', async (req, res) => {
+    await Promise.race([
+        procesarPago(req.body),
+        new Promise(r => setTimeout(r, 2500))
+    ]);
     res.status(200).send('OK');
-    procesarPago(req.body).catch(err => console.error('Error procesando IPN:', err));
 });
 
 async function procesarPago(notification) {
@@ -81,7 +87,7 @@ async function procesarPago(notification) {
     }
 }
 
-const FETCH_TIMEOUT = 8000;
+const FETCH_TIMEOUT = 2500;
 
 async function fetchWithTimeout(url, opts = {}) {
     const controller = new AbortController();
