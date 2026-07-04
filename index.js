@@ -24,6 +24,9 @@ app.get('/webhook', (req, res) => {
     }
 });
 
+// Store temporal: cuando un usuario pide el libro, guardamos su número
+const compradoresPendientes = [];
+
 // 2. ENDPOINT DE RECEPCIÓN (Aquí llegan los mensajes del usuario)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
@@ -50,6 +53,10 @@ app.post('/webhook', async (req, res) => {
                 console.log(`Mensaje de texto procesado de ${from}: "${text}"`);
 
                 if (text === 'libro') {
+                    // Guardamos el número para cuando llegue el IPN de pago
+                    compradoresPendientes.push({ phone: from, phoneId, timestamp: Date.now() });
+                    console.log(`Comprador registrado: ${from} (pendientes: ${compradoresPendientes.length})`);
+
                     const respuesta = `¡Hola! Gracias por tu interés en el libro "Materia Programable y la Próxima Revolución Digital" de ProDig.\n\nEl costo es de $10.000 COP. Puedes realizar el pago de manera 100% segura aquí: https://mpago.li/2upFTB5\n\nTan pronto se confirme el débito, recibirás el libro en formato PDF directamente por este chat.`;
 
                     await enviarMensajeWhatsApp(from, phoneId, respuesta);
@@ -75,17 +82,31 @@ app.post('/webhook-pago', async (req, res) => {
 
         if (notification.type === 'payment') {
             const paymentId = notification.data.id;
+            console.log(`Procesando pago ID: ${paymentId}`);
             const payment = await obtenerPagoMercadoPago(paymentId);
+            console.log('Detalle del pago:', JSON.stringify(payment, null, 2));
 
             if (payment.status === 'approved') {
-                const customerPhone = payment.payer?.phone?.number || payment.external_reference;
+                let customerPhone = payment.payer?.phone?.number || payment.external_reference;
                 const phoneNameId = process.env.PHONE_NUMBER_ID;
 
-                if (customerPhone && phoneNameId) {
-                    const textoRespuesta = `¡Gracias por tu compra! Aquí tienes tu libro "Materia Programable y la Próxima Revolución Digital" en formato PDF:\n\nhttps://fvdltrqzdosqkebsydqn.supabase.co/storage/v1/object/public/Libros/materia_programable_prodig.pdf\n\n¡Disfruta la lectura!`;
-
-                    await enviarMensajeWhatsApp(customerPhone, phoneNameId, textoRespuesta);
+                // Si MP no nos dio el teléfono, usamos el store temporal
+                if (!customerPhone && compradoresPendientes.length > 0) {
+                    const comprador = compradoresPendientes.shift();
+                    customerPhone = comprador.phone;
+                    console.log(`Usando comprador del store temporal: ${customerPhone}`);
                 }
+
+                if (customerPhone && phoneNameId) {
+                    const pdfUrl = "https://fvdltrqzdosqkebsydqn.supabase.co/storage/v1/object/public/Libros/materia_programable_prodig.pdf";
+
+                    console.log(`Enviando PDF a ${customerPhone}...`);
+                    await enviarDocumentoWhatsApp(customerPhone, phoneNameId, pdfUrl);
+                } else {
+                    console.error(`No se pudo determinar el número del comprador. customerPhone: ${customerPhone}, phoneNameId: ${phoneNameId}`);
+                }
+            } else {
+                console.log(`Pago no aprobado. Estado: ${payment.status}`);
             }
         }
     } catch (error) {
@@ -150,6 +171,38 @@ async function enviarMensajeWhatsApp(to, phoneId, text) {
 
     const data = await response.json();
     console.log("Respuesta cruda de Meta:", JSON.stringify(data));
+    return data;
+}
+
+async function enviarDocumentoWhatsApp(to, phoneId, pdfUrl) {
+    const token = process.env.WHATSAPP_ACCESS_TOKEN ? process.env.WHATSAPP_ACCESS_TOKEN.trim() : '';
+    const url = `https://graph.facebook.com/v25.0/${phoneId}/messages`;
+
+    const payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: to,
+        type: "document",
+        document: {
+            link: pdfUrl,
+            filename: "Materia_Programable_ProDig.pdf",
+            caption: "¡Aquí tienes tu libro! Gracias por tu compra."
+        }
+    };
+
+    console.log(`Enviando documento PDF a ${to}...`);
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    console.log("Respuesta de Meta al enviar PDF:", JSON.stringify(data));
     return data;
 }
 
