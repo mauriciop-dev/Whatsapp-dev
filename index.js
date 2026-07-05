@@ -147,12 +147,7 @@ async function crearPreferenceMP(prod, phone) {
         }],
         external_reference: externalRef,
         notification_url: WEBHOOK_PAGO_URL,
-        auto_return: "approved",
-        back_urls: {
-            success: "https://whatsapp-dev-prod.vercel.app/pago-exitoso",
-            failure: "https://whatsapp-dev-prod.vercel.app/pago-fallido",
-            pending: "https://whatsapp-dev-prod.vercel.app/pago-pendiente"
-        }
+        purpose: "wallet_purchase"
     };
 
     const response = await fetchWithTimeout('https://api.mercadopago.com/checkout/preferences', {
