@@ -145,9 +145,6 @@ async function crearPreferenceMP(prod, phone) {
             unit_price: prod.price_cop,
             currency_id: "COP"
         }],
-        payer: {
-            email: "hmauricio.pineda@gmail.com"
-        },
         external_reference: externalRef,
         notification_url: WEBHOOK_PAGO_URL,
         auto_return: "approved",
